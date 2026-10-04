@@ -1,6 +1,7 @@
 # LinuxPartialSuspendProject
 
 # TBA / In drafting
+But if you have question or something to tell please tell in **Issues**
 
 ## FAQ
 
