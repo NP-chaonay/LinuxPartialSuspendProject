@@ -3,6 +3,8 @@
 # TBA / In drafting
 But if you have question or something to tell please tell in **Issues**
 
+สำหรับคนใช้ภาษาไทย พวก README/Wiki/ส่วนสำคัญ จะแปลให้นะครับแต่ะล่าช้ากว่า เพราะผมจะเขียนเป็น English ไปก่อน
+
 ## FAQ
 
 **What is this project for?:** <TBA>
