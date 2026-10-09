@@ -16,11 +16,15 @@ But if you have question or something to tell please tell in **Issues**
 **Is this project is opposite side of battery-saving:** Nope. if we reduce unnecessary bg tasks, but we still get high power usage, then it is useless. This project is battery-focused. My project guarantee that you can control how much power saving trade-off with functionality; you can choose to let battery saving similar to the traditional full suspending while kept few functionality (OR EVEN IN FULL SUSPENDING).
 <TBA>
 
-****
+**Is my system compatible:** I don't know how much worth on non-s0ix system, but it definitely useful on system with s0ix.
+
+**What is s0ix:** New Power States on x86 system, implemented by hardware design that allow unused system's sub-component to powered down the circuit.
+
 **How this project plans about power state:**
 - Q1: Screen On
 - Q2: Screen Off (DPMS Off / DRM Suspended)
 - Q3: Partial Suspending (New state proposed by us)
+- Q3.5: Low Power Partial Suspending (same as Q3 but have very low maximum allowed power usage (such as not >500mW))
 - Q4: Userspace Suspending (New state proposed by us; almost userspace is freezed, except some (such as our system + init process), kernel is still running, thus makes system resuming does more quickly)
 - Q5: Full Suspending (Kernel API for suspending, in modern system is s2idle)
 
