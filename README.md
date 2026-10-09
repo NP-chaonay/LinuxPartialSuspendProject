@@ -24,7 +24,7 @@ But if you have question or something to tell please tell in **Issues**
 - Q1: Screen On
 - Q2: Screen Off (DPMS Off / DRM Suspended)
 - Q3: Partial Suspending (New state proposed by us)
-- Q3.5: Low Power Partial Suspending (same as Q3 but have very low maximum allowed power usage (such as not >500mW))
+- Q3.5: Low Power Partial Suspending (New state proposed by us) (same as Q3 but have very low maximum allowed power usage (such as not >500mW))
 - Q4: Userspace Suspending (New state proposed by us; almost userspace is freezed, except some (such as our system + init process), kernel is still running, thus makes system resuming does more quickly)
 - Q5: Full Suspending (Kernel API for suspending, in modern system is s2idle)
 
