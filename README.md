@@ -1,39 +1,55 @@
 # LinuxPartialSuspendProject
 
-# This docs is in drafting here below is completed part you can view (but it will be later added)
+> REMARK: Except for the "DRAFTING PART" and "DRAFTING -- COPY FROM AI PART" sections, the text in this documentation has been refined by AI to ensure a professional standard.
 
-But if you have question or something to tell please tell in **Issues**
+> หมายเหตุสำหรับผู้อ่านภาษาไทย: สำหรับคนใช้ภาษาไทย พวก README/Wiki/ส่วนสำคัญ จะแปลให้นะครับแต่อาจจะช้าหน่อย เพราะผมจะเขียนเป็นภาษาอังกฤษก่อน
 
-สำหรับคนใช้ภาษาไทย พวก README/Wiki/ส่วนสำคัญ จะแปลให้นะครับแต่ะล่าช้ากว่า เพราะผมจะเขียนเป็น English ไปก่อน
+## Welcome
+
+- If you have any questions or feedback, feel free to open an issue in **Issues**.
+
+### Experiments Done
+- Freezing cgroups for both "system.slice" and "user.slice"
+> **Issue:** Sometimes buggy—causes user screen access to fail (likely an issue with seat management).
+> 
+> **Symptom:** The system switches to the login screen $\rightarrow$ entering the password causes an infinite checking loop $\rightarrow$ manually switching via Virtual Terminal (VT) leads to a partially frozen state (stuck on the login UI, un-interactive, though the mouse cursor still moves).
+> 
+> **Next Step:** We need to find a solution (possibly via selective cgroup freezing); otherwise, User Suspending won't be viable.
 
 ## FAQ
 
-**What is this project for?:** <TBA>
-**What is goal of this project:**
-- First: We make basic code leis goal of this projecttting user able to run some bg tasks while the other tasks are suspending
-- Secondly: We improve the system to have better UX + better integration + better app. stability
-- Third: We can to do more than we do... we promote and advocate this into OOBE experience of Linux Desktop by make a RFC for freedesktop.org
-**Is this project is opposite side of battery-saving:** Nope. if we reduce unnecessary bg tasks, but we still get high power usage, then it is useless. This project is battery-focused. My project guarantee that you can control how much power saving trade-off with functionality; you can choose to let battery saving similar to the traditional full suspending while kept few functionality (OR EVEN IN FULL SUSPENDING).
+**What is this project for?**  
 <TBA>
 
-**Is my system compatible:** I don't know how much worth on non-s0ix system, but it definitely useful on system with s0ix.
+**What is the goal of this project?**
+- **First:** Build base code that allows users to run specific background tasks while suspending all others.
+- **Second:** Improve the system for better UX, deeper integration, and higher application stability.
+- **Third:** Go further by promoting and advocating for this as an out-of-the-box (OOBE) feature for Linux Desktop via a freedesktop.org RFC proposal.
 
-**What is s0ix:** New Power States on x86 system, implemented by hardware design that allow unused system's sub-component to powered down the circuit.
+**Is this project the opposite of battery saving?**  
+Nope. Reducing unnecessary background tasks is useless if power consumption remains high. This project is battery-focused. It guarantees that you can control the tradeoff between power savings and functionality—you can choose power savings similar to traditional full suspend while retaining selective functionality (or even while fully suspended).  
+<TBA>
 
-**How this project plans about power state:**
-- Q1: Screen On
-- Q2: Screen Off (DPMS Off / DRM Suspended)
-- Q3: Partial Suspending (New state proposed by us)
-- Q3.5: Low Power Partial Suspending (New state proposed by us) (same as Q3 but have very low maximum allowed power usage (such as not >500mW))
-- Q4: Userspace Suspending (New state proposed by us; almost userspace is freezed, except some (such as our system + init process), kernel is still running, thus makes system resuming does more quickly)
-- Q5: Full Suspending (Kernel API for suspending, in modern system is s2idle)
+**Is my system compatible?**  
+I don't know how beneficial this is on non-s0ix systems, but it is definitely useful on systems supporting s0ix.
 
-# Below this line is heavy unstable... can be moved to above/deleted
+**What is s0ix?**  
+A modern power state on x86 architectures, implemented at the hardware level, that allows unused system sub-components to power down their circuits dynamically.
+
+**How does this project plan power states?**
+- **Q1: Screen On**
+- **Q2: Screen Off** (DPMS Off / DRM Suspended)
+- **Q3: Partial Suspending** (New state proposed by us)
+- **Q3.5: Low-Power Partial Suspending** (New state proposed by us; same as Q3, but capped at a very low maximum power draw, e.g., $\le$ 500mW)
+- **Q4: Userspace Suspending** (New state proposed by us; almost all of userspace is frozen except vital services like our system and init. Because the kernel stays running, system resume is much faster)
+- **Q5: Full Suspending** (Standard kernel-level suspend API; `s2idle` on modern systems)
+
+# [DRAFTING PART]
 
 ## Breif StateMap
 > Screen On (Smart BG Power Save) >> Screen Off (Smart BG Power Save but more aggressive policy + depends on app... can be resource-throttled or freezed-and-resume-shortly-then-be-freezed) >> Partial Suspending (App must request, to continue in this state + app that doesnt request can request perodic wakeup) >> Full Suspending (We can make it smart by allow perodic wakeup to do something shortly quick and battery-save... and quickly return to full suspending)
 
-# Below this line is copied from AI
+# [DRAFTING - COPY FROM AI PART]
 
 Here is a clean, technical spec draft ready to paste directly into your GitHub Wiki, README, or project documentation.
 
