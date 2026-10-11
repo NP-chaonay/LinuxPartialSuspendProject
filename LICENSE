@@ -1,21 +1,107 @@
-MIT License
+NP-chaonay License (Mode:AICreated_Default; Version:1)
 
-Copyright (c) 2026 Nuttapong Punpipat
+Copyright (c) [2026] ณัฐพงศ์ พันพิพัฒน์ (Nuttapong Punpipat; nuttapongpunpipat@gmail.com) / NP-chaonay Production
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+================================================================================
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+DEFINITIONS AND SCOPE
+================================================================================
 
+1.1 "Licensor" refers to ณัฐพงศ์ พันพิพัฒน์ (Nuttapong Punpipat), operating under
+the alias/brand name "NP-chaonay Production".
+
+1.2 "Software" refers to the source code, compiled binaries, documentation, media,
+graphics, audio, and all associated assets provided alongside or under this
+License.
+
+1.3 "You" (or "Licensee") refers to an individual or legal entity exercising
+permissions granted by this License.
+
+1.4 "Commercial Purpose" refers to any activity intended for or directed toward
+commercial advantage, financial compensation, direct or indirect monetary gain,
+subscription revenue, paid support/consulting tied directly to the Software,
+or monetization through advertising or bundled proprietary commercial products.
+
+1.5 "Derivative Work" refers to any modified version, adaptation, translation,
+or project derived from or incorporating any portion of the Software.
+
+================================================================================
+2. PERMISSIONS AND LICENSED RIGHTS
+
+Subject to the terms and restrictions set forth in Section 3 and Section 4, the
+Licensor grants You a worldwide, royalty-free, non-exclusive license to:
+
+a) Use, run, and execute the Software for personal, private, academic, and
+educational non-commercial purposes.
+b) Edit, adapt, transform, or build upon the Software to create Derivative Works.
+c) Reproduce and redistribute unmodified or modified copies of the Software.
+d) Host the Software as a non-commercial web application, API, or cloud service.
+e) Sublicense these same rights to third parties, provided that all sublicense
+grants remain strictly bound by the conditions and restrictions of this License.
+
+================================================================================
+3. RESTRICTIONS
+
+Your license rights are explicitly conditioned upon your strict compliance with
+the following restrictions:
+
+3.1 Non-Commercial Restriction:
+You shall NOT use, deploy, host, sublicense, or distribute the Software or
+Derivative Works for any Commercial Purpose. Any commercial monetization or
+deployment is strictly prohibited without a separate, written commercial agreement
+from the Licensor.
+
+3.2 Prohibition on Rebranding:
+You shall NOT remove, obscure, or alter any original copyright notices, logos,
+trademarks, or authorship statements from the Software. You may NOT claim sole
+authorship or ownership of the original Software or uncredited Derivative Works.
+
+3.3 Military Domain Prohibition:
+You shall NOT use, deploy, integrate, or adapt the Software or Derivative Works
+for any military, defense, weapons development, offensive/defensive combat,
+warfare, or state-sponsored surveillance operations.
+
+================================================================================
+4. CONDITIONS AND ATTRIBUTION
+
+4.1 Notice Retention:
+You must include a copy of this entire License text and the copyright notice
+above in all copies or substantial portions of the Software or Derivative
+Works that You distribute or host.
+
+4.2 No Mandatory Copyleft:
+While Derivative Works remain strictly bound by the Non-Commercial and
+Attribution requirements of this License, You are not required to open-source
+or publicly release the source code of any separate proprietary code integrated
+alongside the Software, provided it operates strictly non-commercially.
+
+4.3 Patent Non-Aggression:
+If You initiate patent litigation or assert patent infringement claims against
+the Licensor (including cross-claims or counterclaims), all rights granted to
+You under this License shall automatically terminate as of the date such
+litigation is filed.
+
+================================================================================
+5. TERMINATION
+
+Any failure by You to comply with any term or condition of this License shall
+automatically terminate all rights granted hereunder immediately and without
+notice. Upon termination, You must immediately cease all use, hosting, and
+distribution of the Software and destroy all copies in your possession.
+
+================================================================================
+6. DISCLAIMER OF WARRANTY AND LIMITATION OF LIABILITY
+
+6.1 DISCLAIMER OF WARRANTY:
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+6.2 LIMITATION OF LIABILITY:
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSOR SHALL NOT BE
+HELD LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
+DAMAGES, OR LOSS OF PROFITS, DATA, OR GOODWILL ARISING OUT OF OR RELATED TO
+THIS LICENSE OR THE USE OF THE SOFTWARE.
