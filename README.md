@@ -38,7 +38,12 @@ Nope. Reducing unnecessary background tasks is useless if power consumption rema
 <TBA>
 
 **Is my system compatible?**  
-We don't know how beneficial this is on non-s0ix systems, but it is definitely useful on systems supporting s0ix.
+- This project is compatible with Linux distributions featuring the following components:
+  - systemd
+  - cgroup v2 (or newer)
+  - Desktop environment integrated with systemd's cgroup management (recommended for full features)
+- However, our primary target and testing environment is the latest Ubuntu LTS release (x86_64) running GNOME.
+- We don't know how beneficial this is on non-s0ix systems, but it is definitely useful on systems supporting s0ix.
 
 **What is s0ix?**  
 A modern power state on x86 architectures, implemented at the hardware level, that allows unused system sub-components to power down their circuits dynamically.
@@ -50,6 +55,8 @@ A modern power state on x86 architectures, implemented at the hardware level, th
 - **Q3.5: Low-Power Partial Suspending** (New state proposed by us; same as Q3, but capped at a very low maximum power draw, e.g., $\le$ 500mW)
 - **Q4: Userspace Suspending** (New state proposed by us; almost all of userspace is frozen except vital services like our system and init. Because the kernel stays running, system resume is much faster)
 - **Q5: Full Suspending** (Standard kernel-level suspend API; `s2idle` on modern systems)
+
+
 
 # [DRAFTING PART]
 
