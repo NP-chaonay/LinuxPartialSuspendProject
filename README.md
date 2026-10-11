@@ -13,7 +13,7 @@ This project is part of a larger initiative: We Will Make Linux Desktop Great Ag
 - If you have any questions or feedback, feel free to open an Issue.
 - Want to contribute or volunteer? Feel free to start a discussion in the "Issue" tab.
 
-### Experiments Done
+## Experiments Done
 - Does freezing an audio-playing app pause its audio?
 > works normally
 - Freezing cgroups for both "system.slice" and "user.slice"
