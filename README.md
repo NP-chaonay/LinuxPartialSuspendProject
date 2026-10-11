@@ -9,6 +9,8 @@
 - If you have any questions or feedback, feel free to open an issue in **Issues**.
 
 ### Experiments Done
+- Does freezing an audio-playing app pause its audio?
+> works normally
 - Freezing cgroups for both "system.slice" and "user.slice"
 > **Issue:** Sometimes buggy—causes user screen access to fail (likely an issue with seat management).
 > 
@@ -31,7 +33,7 @@ Nope. Reducing unnecessary background tasks is useless if power consumption rema
 <TBA>
 
 **Is my system compatible?**  
-I don't know how beneficial this is on non-s0ix systems, but it is definitely useful on systems supporting s0ix.
+We don't know how beneficial this is on non-s0ix systems, but it is definitely useful on systems supporting s0ix.
 
 **What is s0ix?**  
 A modern power state on x86 architectures, implemented at the hardware level, that allows unused system sub-components to power down their circuits dynamically.
