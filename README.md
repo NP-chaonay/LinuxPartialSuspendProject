@@ -32,7 +32,7 @@ This project is part of a larger initiative: We Will Make Linux Desktop Great Ag
 - **First:** Build base code that allows users to run specific background tasks while suspending all others.
 - **Second:** Improve the system for better UX, deeper integration, and higher application stability.
 - **Third:** Go further by promoting and advocating for this as an out-of-the-box (OOBE) feature for Linux Desktop via a freedesktop.org RFC proposal.
-
+  - The starting point: https://www.freedesktop.org/wiki/NewProject/
 **Is this project the opposite of battery saving?**  
 Nope. Reducing unnecessary background tasks is useless if power consumption remains high. This project is battery-focused. It guarantees that you can control the tradeoff between power savings and functionality—you can choose power savings similar to traditional full suspend while retaining selective functionality (or even while fully suspended).  
 <TBA>
