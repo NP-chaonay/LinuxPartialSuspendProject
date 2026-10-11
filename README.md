@@ -1,5 +1,7 @@
 # LinuxPartialSuspendProject
 
+> REMARK: This documentation is incomplete and currently under development. Sections marked [DRAFTING <...> PART] are work-in-progress and may lack polish, but they are available if you want early access to upcoming content. Please note that these sections are subject to change.
+
 > REMARK: Except for the "DRAFTING PART" and "DRAFTING -- COPY FROM AI PART" sections, the text in this documentation has been refined by AI to ensure a professional standard.
 
 > หมายเหตุสำหรับผู้อ่านภาษาไทย: สำหรับคนใช้ภาษาไทย พวก README/Wiki/ส่วนสำคัญ จะแปลให้นะครับแต่อาจจะช้าหน่อย เพราะผมจะเขียนเป็นภาษาอังกฤษก่อน
