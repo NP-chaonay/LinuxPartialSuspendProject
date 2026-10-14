@@ -48,14 +48,19 @@ Nope. Reducing unnecessary background tasks is useless if power consumption rema
 **What is s0ix?**  
 A modern power state on x86 architectures, implemented at the hardware level, that allows unused system sub-components to power down their circuits dynamically.
 
-**How does this project plan power states in user-space?**
+**How does this project plan power states in user-space?: (see below)**
 > REMARK: These power states are used internally and meant for power-users or developers. End-users have a different perspective and set of terminology.
 - **Q1: Screen On**
 - **Q2: Screen Off** (DPMS Off / DRM Suspended)
 - **Q3: Partial Suspending** (New state proposed by us)
-- **Q3.5: Low-Power Partial Suspending** (New state proposed by us; same as Q3, but capped at a very low maximum power draw, e.g., $\le$ 500mW)
+- **Q3L: Low-Power Partial Suspending** (New state proposed by us; same as Q3, but capped at a very low maximum power draw, e.g., $\le$ 500mW)
 - **Q4: Userspace Suspending** (New state proposed by us; almost all of userspace is frozen except vital services like our system and init. Because the kernel stays running, system resume is much faster)
 - **Q5: Full Suspending** (Standard kernel-level suspend API; `s2idle` on modern systems)
+
+Sub-states (Q3+):
+- Network Status: Connected | Disconnected (Allowed Wi-Fi / Ethernet)
+- Allow Periodic Wakeup: Yes | No
+  * Enables background applications and services to execute periodic tasks efficiently during brief wake intervals to conserve battery.
 
 # [DRAFTING PART]
 
