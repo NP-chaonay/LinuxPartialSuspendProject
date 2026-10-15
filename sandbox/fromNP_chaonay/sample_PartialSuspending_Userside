@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+
+# LICENSE: UNLICENSE (Public Domain) because it is made by AI
+
+import glob
+import json
+import os
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+
+CONFIG_PATH = os.path.expanduser("./partialsuspending_config.json")
+CGROUP_HELPER_PATH = os.path.expanduser("./partialsuspending_cgroupfinder")
+IPC_PATH = "/run/user/1000/np_chaonay/partialsus_waylandc_unfreeze"
+
+# --- Event-Driven State Variables ---
+state_lock = threading.Lock()
+latest_requested_lock_state = False   # True = Locked (ScrOff), False = Unlocked (ScrOn)
+latest_waylandc_unfreeze_state = False  # True = IPC sent 1 (WaylandC Unfreeze), False = IPC sent 0 (Normal)
+state_changed_event = threading.Event()
+shutdown_requested = False
+
+# Tracks frozen target configurations during the current session
+# Item format: {
+#   'path': cgroup_dir_path,
+#   'type': 'freeze' | 'cpu_limit',
+#   'do_resume_on_wayland_c': bool,
+#   'periodic_resume': (freeze_min, unfreeze_min) | None,
+#   'waylandc_active': bool,
+#   'periodic_active': bool,
+#   'current_state': 'frozen' | 'unfrozen'
+# }
+currently_frozen_targets = []
+# Item format: {'id': sink_input_id, 'cgroup': cgroup_dir_path}
+muted_sink_inputs = []
+
+# --- Periodic Resume Control Variables ---
+periodic_stop_event = threading.Event()
+periodic_threads = []
+
+
+def stop_all_periodic_timers():
+    """Stops and clears all running periodic resume timer threads."""
+    global periodic_stop_event, periodic_threads
+    periodic_stop_event.set()
+    periodic_threads = []
+
+
+def parse_periodic_resume(opts):
+    """
+    Parses optattrib -> perodicResume from app options in config.
+    Returns (freeze_min, unfreeze_min) tuple if valid, or None.
+    """
+    optattrib = opts.get("optattrib")
+    if not isinstance(optattrib, dict):
+        return None
+
+    val = optattrib.get("perodicResume")
+    if val is None:
+        val = optattrib.get("periodicResume")  # Fallback for spelling
+
+    if isinstance(val, (list, tuple)) and len(val) >= 2:
+        try:
+            freeze_min = float(val[0])
+            unfreeze_min = float(val[1])
+            if freeze_min > 0 and unfreeze_min > 0:
+                return (freeze_min, unfreeze_min)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def sync_target_state(target):
+    """
+    Evaluates target state based on special unfreeze flags:
+    - Target is unfrozen if (waylandc_active or periodic_active) is True.
+    - Target is frozen ONLY when all special unfreezes are deactivated.
+    """
+    should_be_unfrozen = target.get('waylandc_active', False) or target.get('periodic_active', False)
+    desired_state = 'unfrozen' if should_be_unfrozen else 'frozen'
+
+    if target.get('current_state') == desired_state:
+        return
+
+    cgroup_dir = target['path']
+    if desired_state == 'unfrozen':
+        print(f"  ├─ [Special Resume Active] Resuming {cgroup_dir} (WaylandC={target['waylandc_active']}, Periodic={target['periodic_active']})")
+        unfreeze_targets([target])
+        target['current_state'] = 'unfrozen'
+    else:
+        print(f"  ├─ [Special Resume Inactive] Re-freezing {cgroup_dir} (All special unfreezes deactivated)")
+        refreeze_targets([target])
+        target['current_state'] = 'frozen'
+
+
+def periodic_resume_worker(target, freeze_min, unfreeze_min, stop_event):
+    """Background thread managing periodic freeze/unfreeze cycles during Screen-OFF."""
+    freeze_sec = freeze_min * 60.0
+    unfreeze_sec = unfreeze_min * 60.0
+    cgroup_path = target['path']
+
+    print(f"  ├─ [Periodic Thread] Started for {cgroup_path} (Freeze: {freeze_min}m, Unfreeze: {unfreeze_min}m)")
+
+    while not stop_event.is_set():
+        # Phase 1: Normal Freeze duration
+        if stop_event.wait(freeze_sec):
+            break
+
+        # Phase 2: Temporary Unfreeze duration
+        print(f"\n[Periodic Event] Starting unfreeze phase ({unfreeze_min}m) for {cgroup_path}")
+        with state_lock:
+            target['periodic_active'] = True
+            sync_target_state(target)
+
+        if stop_event.wait(unfreeze_sec):
+            break
+
+        # Phase 3: Return to Freeze state
+        print(f"\n[Periodic Event] Ending unfreeze phase for {cgroup_path}")
+        with state_lock:
+            target['periodic_active'] = False
+            sync_target_state(target)
+
+    print(f"  ├─ [Periodic Thread] Stopped for {cgroup_path}")
+
+
+def get_cgroup_pids(cgroup_dir):
+    """Retrieve all PIDs associated with a given cgroup directory."""
+    procs_file = os.path.join(cgroup_dir, "cgroup.procs")
+
+    pids = set()
+    if os.path.exists(procs_file):
+        try:
+            with open(procs_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.isdigit():
+                        pids.add(int(line))
+        except Exception as e:
+            print(f"[Error] Failed reading cgroup PIDs from {procs_file}: {e}", file=sys.stderr)
+    return pids
+
+
+def get_active_audio_streams():
+    """Queries pactl (PipeWire) for active sink-inputs."""
+    try:
+        res = subprocess.run(
+            ["pactl", "-f", "json", "list", "sink-inputs"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if res.returncode != 0 or not res.stdout.strip():
+            return []
+
+        data = json.loads(res.stdout)
+        streams = []
+        for item in data:
+            sink_input_id = item.get("index")
+            muted = item.get("mute", False)
+            properties = item.get("properties", {})
+
+            pid_str = properties.get("application.process.id")
+            if sink_input_id is not None and pid_str and pid_str.isdigit():
+                streams.append({
+                    "id": sink_input_id,
+                    "pid": int(pid_str),
+                    "muted": muted
+                })
+        return streams
+    except Exception as e:
+        print(f"[Warning] Failed to query PipeWire audio streams via pactl: {e}", file=sys.stderr)
+        return []
+
+
+def set_sink_input_mute(sink_input_id, mute=True):
+    """Mutes (1) or unmutes (0) a PipeWire sink-input by ID."""
+    state_str = "1" if mute else "0"
+    try:
+        res = subprocess.run(
+            ["pactl", "set-sink-input-mute", str(sink_input_id), state_str],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return res.returncode == 0
+    except Exception as e:
+        print(f"[Error] Failed setting mute state for sink-input {sink_input_id}: {e}", file=sys.stderr)
+        return False
+
+
+def handle_audio_mute_for_cgroup(cgroup_dir):
+    """Mutes active audio streams belonging to PIDs in the given cgroup."""
+    global muted_sink_inputs
+    pids = get_cgroup_pids(cgroup_dir)
+    if not pids:
+        return
+
+    active_streams = get_active_audio_streams()
+    for stream in active_streams:
+        if stream["pid"] in pids:
+            if not stream["muted"]:
+                print(f"   ├─ [Audio] Muting stream ID {stream['id']} (PID {stream['pid']})")
+                if set_sink_input_mute(stream["id"], mute=True):
+                    if not any(item['id'] == stream['id'] for item in muted_sink_inputs):
+                        muted_sink_inputs.append({'id': stream['id'], 'cgroup': cgroup_dir})
+            else:
+                print(f"   ├─ [Audio] Stream ID {stream['id']} (PID {stream['pid']}) is already muted.")
+
+
+def restore_audio_mutes_for_targets(target_list=None):
+    """
+    Unmutes audio streams.
+    - If target_list is specified: Unmutes ONLY streams associated with those target cgroups.
+    - If target_list is None: Unmutes ALL tracked streams (e.g. Screen ON).
+    """
+    global muted_sink_inputs
+    if not muted_sink_inputs:
+        return
+
+    if target_list is None:
+        print("  ├─ Unmuting all tracked audio streams...")
+        for item in muted_sink_inputs:
+            print(f"   ├─ [Audio Unmute] Stream ID {item['id']}")
+            set_sink_input_mute(item['id'], mute=False)
+        muted_sink_inputs.clear()
+    else:
+        target_cgroups = {t['path'] for t in target_list}
+        remaining_mutes = []
+        print(f"  ├─ Unmuting audio streams for target subset ({len(target_cgroups)} cgroup(s))...")
+        for item in muted_sink_inputs:
+            if item['cgroup'] in target_cgroups:
+                print(f"   ├─ [Audio Unmute] Stream ID {item['id']} (cgroup: {item['cgroup']})")
+                set_sink_input_mute(item['id'], mute=False)
+            else:
+                remaining_mutes.append(item)
+        muted_sink_inputs = remaining_mutes
+
+
+def dpms_screen_listener():
+    """Background thread: Monitor DPMS status from /sys/class/drm/card*/*/dpms."""
+    global latest_requested_lock_state
+
+    def get_dpms_paths():
+        return glob.glob("/sys/class/drm/card*/*/dpms")
+
+    def is_any_screen_on():
+        paths = get_dpms_paths()
+        if not paths:
+            return False
+        for p in paths:
+            try:
+                with open(p, "r") as f:
+                    if f.read().strip() == "On":
+                        return True
+            except Exception:
+                pass
+        return False
+
+    current_screen_state = is_any_screen_on()
+
+    if not current_screen_state:
+        with state_lock:
+            latest_requested_lock_state = True  # True = Lock (Scr Off)
+        state_changed_event.set()
+
+    print(f"[DPMS Listener] Initialized. Initial Screen State: {'Scr On' if current_screen_state else 'Scr Off'}")
+
+    while not shutdown_requested:
+        time.sleep(1)
+
+        if current_screen_state is True:
+            if not is_any_screen_on():
+                current_screen_state = False
+                print("[DPMS Event] All screens turned OFF -> Requesting Lock (Scr Off)")
+                with state_lock:
+                    latest_requested_lock_state = True
+                state_changed_event.set()
+
+        elif current_screen_state is False:
+            if is_any_screen_on():
+                current_screen_state = True
+                print("[DPMS Event] At least one screen turned ON -> Requesting Unlock (Scr On)")
+                with state_lock:
+                    latest_requested_lock_state = False
+                state_changed_event.set()
+
+
+def drain_ipc_fifo():
+    """Non-blockingly reads and discards all pending bytes from the FIFO buffer."""
+    if not os.path.exists(IPC_PATH) or not stat.S_ISFIFO(os.stat(IPC_PATH).st_mode):
+        return
+    try:
+        fd = os.open(IPC_PATH, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            while True:
+                buf = os.read(fd, 1024)
+                if not buf:
+                    break
+        except (BlockingIOError, OSError):
+            pass
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def ipc_waylandc_unfreeze_listener():
+    """Background thread: Listens for WaylandC unfreeze IPC signals non-stop."""
+    global latest_waylandc_unfreeze_state
+
+    ipc_dir = os.path.dirname(IPC_PATH)
+    os.makedirs(ipc_dir, exist_ok=True)
+
+    if not os.path.exists(IPC_PATH):
+        try:
+            os.mkfifo(IPC_PATH)
+        except Exception:
+            pass
+
+    print(f"[IPC Listener] Listening for WaylandC unfreeze signals on {IPC_PATH}")
+
+    while not shutdown_requested:
+        try:
+            with open(IPC_PATH, "r") as f:
+                for line in f:
+                    content = line.strip()
+                    if not content:
+                        continue
+
+                    new_state = None
+                    if content == "1":
+                        new_state = True
+                    elif content == "0":
+                        new_state = False
+
+                    if new_state is not None:
+                        with state_lock:
+                            if latest_requested_lock_state is False:
+                                latest_waylandc_unfreeze_state = False
+                                print(f"[IPC Signal] Screen ON -> Drained and discarded signal '{content}'")
+                            else:
+                                if latest_waylandc_unfreeze_state != new_state:
+                                    latest_waylandc_unfreeze_state = new_state
+                                    print(f"[IPC Signal] Received '{content}' -> Requesting {'WaylandC Unfreeze' if new_state else 'WaylandC Refreeze'}")
+                                    state_changed_event.set()
+        except Exception:
+            time.sleep(0.2)
+
+
+def load_config():
+    """Reads config file directly upon calling."""
+    if not os.path.exists(CONFIG_PATH):
+        print(f"[Warning] Config file not found at {CONFIG_PATH}", file=sys.stderr)
+        return {}
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            data = json.load(f)
+            return data.get("regappcode", {})
+    except Exception as e:
+        print(f"[Error] Failed to parse config file: {e}", file=sys.stderr)
+        return {}
+
+
+def get_cgroups_for_app(app_name):
+    """Executes helper script `./partialsuspending_cgroupfinder <app_name>`."""
+    if not os.path.exists(CGROUP_HELPER_PATH):
+        print(f"[Error] Helper script not found at {CGROUP_HELPER_PATH}", file=sys.stderr)
+        return []
+
+    try:
+        res = subprocess.run(
+            [CGROUP_HELPER_PATH, app_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        cgroup_paths = []
+        for line in res.stdout.splitlines():
+            path = line.strip()
+            if path.startswith("/"):
+                cgroup_paths.append(path)
+
+        return cgroup_paths
+    except Exception as e:
+        print(f"[Error] Failed executing helper for app '{app_name}': {e}", file=sys.stderr)
+        return []
+
+
+def write_cgroup_file(filepath, val):
+    try:
+        with open(filepath, "w") as f:
+            f.write(str(val))
+        return True
+    except Exception:
+        try:
+            res = subprocess.run(
+                ["/bin/bash", "-c", f"echo '{val}' | tee {filepath}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return res.returncode == 0
+        except Exception as e:
+            print(f"[Error] Failed writing {val} to {filepath}: {e}", file=sys.stderr)
+            return False
+
+
+def is_cgroup_frozen(cgroup_dir):
+    freeze_file = os.path.join(cgroup_dir, "cgroup.freeze")
+    if os.path.exists(freeze_file):
+        try:
+            with open(freeze_file, "r") as f:
+                return f.read().strip() == "1"
+        except Exception as e:
+            print(f"[Warning] Failed reading {freeze_file}: {e}", file=sys.stderr)
+    return False
+
+
+def is_cgroup_throttled(cgroup_dir):
+    cpu_max_file = os.path.join(cgroup_dir, "cpu.max")
+    if os.path.exists(cpu_max_file):
+        try:
+            with open(cpu_max_file, "r") as f:
+                content = f.read().strip()
+                parts = content.split()
+                if parts and parts[0] != "max":
+                    return True
+        except Exception as e:
+            print(f"[Warning] Failed reading {cpu_max_file}: {e}", file=sys.stderr)
+    return False
+
+
+def freeze_targets(target_list):
+    """Applies cgroup freeze or CPU limit to targets and mutes audio."""
+    successful_targets = []
+    for target in target_list:
+        cgroup_dir = target['path']
+        approach_type = target['type']
+
+        if approach_type == 'freeze':
+            if is_cgroup_frozen(cgroup_dir):
+                print(f"  ├─ [Skip Freeze] {cgroup_dir} is already frozen.")
+                successful_targets.append(target)
+                continue
+
+            freeze_file = os.path.join(cgroup_dir, "cgroup.freeze")
+            if write_cgroup_file(freeze_file, "1"):
+                successful_targets.append(target)
+                print(f"  ├─ [Frozen (cgroup.freeze=1)] {cgroup_dir}")
+            else:
+                print(f"  ├─ [Failed Freeze] {cgroup_dir}", file=sys.stderr)
+
+        elif approach_type == 'cpu_limit':
+            if is_cgroup_throttled(cgroup_dir):
+                print(f"  ├─ [Skip Throttle] {cgroup_dir} is already throttled.")
+                successful_targets.append(target)
+                continue
+
+            handle_audio_mute_for_cgroup(cgroup_dir)
+
+            cpu_max_file = os.path.join(cgroup_dir, "cpu.max")
+            if write_cgroup_file(cpu_max_file, "62500 1000000"):
+                successful_targets.append(target)
+                print(f"  ├─ [CPU Throttled (62500 1000000)] {cgroup_dir}")
+            else:
+                print(f"  ├─ [Failed CPU Limit] {cgroup_dir}", file=sys.stderr)
+
+    return successful_targets
+
+
+def refreeze_targets(target_list):
+    """Re-applies freeze/throttle using existing tracked target data."""
+    if not target_list:
+        print("  └─ [Refreeze] No cgroup targets tracked for refreeze.")
+        return []
+    print(f"  └─ Refreezing {len(target_list)} existing target cgroup(s)...")
+    return freeze_targets(target_list)
+
+
+def unfreeze_targets(target_list):
+    """Restores cgroup states and unmutes audio specifically for the provided target_list."""
+    for target in target_list:
+        cgroup_dir = target['path']
+        approach_type = target['type']
+
+        if approach_type == 'freeze':
+            freeze_file = os.path.join(cgroup_dir, "cgroup.freeze")
+            if write_cgroup_file(freeze_file, "0"):
+                print(f"  ├─ [Unfrozen (cgroup.freeze=0)] {cgroup_dir}")
+            else:
+                print(f"  ├─ [Failed Unfreeze] {cgroup_dir}", file=sys.stderr)
+
+        elif approach_type == 'cpu_limit':
+            cpu_max_file = os.path.join(cgroup_dir, "cpu.max")
+            if write_cgroup_file(cpu_max_file, "max 1000000"):
+                print(f"  ├─ [CPU Restored (max 1000000)] {cgroup_dir}")
+            else:
+                print(f"  ├─ [Failed CPU Restore] {cgroup_dir}", file=sys.stderr)
+
+    # Unmute audio ONLY for the cgroups present in target_list
+    restore_audio_mutes_for_targets(target_list)
+
+
+def main():
+    global shutdown_requested, currently_frozen_targets, latest_waylandc_unfreeze_state
+
+    threading.Thread(target=dpms_screen_listener, daemon=True).start()
+    threading.Thread(target=ipc_waylandc_unfreeze_listener, daemon=True).start()
+
+    print("Modern Standby Daemon running...")
+    print(f"Monitoring DPMS & WaylandC IPC at: {IPC_PATH}")
+
+    current_applied_screen_state = False  # False = ScrOn, True = ScrOff
+    current_applied_waylandc_unfreeze = False  # True = WaylandC IPC active, False = Normal
+
+    def cleanup(signum, frame):
+        global shutdown_requested, currently_frozen_targets
+        print("\n[Event] Shutting down... Unfreezing cgroups and restoring audio.")
+        shutdown_requested = True
+        stop_all_periodic_timers()
+        if currently_frozen_targets:
+            unfreeze_targets(currently_frozen_targets)
+            restore_audio_mutes_for_targets(None)
+            currently_frozen_targets = []
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    while True:
+        state_changed_event.wait()
+        state_changed_event.clear()
+
+        with state_lock:
+            target_screen_state = latest_requested_lock_state     # True = ScrOff, False = ScrOn
+            target_waylandc_unfreeze = latest_waylandc_unfreeze_state # True = WaylandC Unfreeze, False = Refreeze
+
+        # =========================================================================
+        # STATE TRANSITION 1: Screen ON (ScrOff -> ScrOn)
+        # =========================================================================
+        if target_screen_state is False:
+            if current_applied_screen_state is True:
+                print("\n[Event] Unlock detected (ScrOn). Restoring all cgroups and audio state...")
+
+                stop_all_periodic_timers()
+
+                if currently_frozen_targets:
+                    print(f"  └─ Restoring {len(currently_frozen_targets)} target cgroup(s)...")
+                    unfreeze_targets(currently_frozen_targets)
+
+                restore_audio_mutes_for_targets(None)
+
+                currently_frozen_targets = []
+                current_applied_screen_state = False
+                current_applied_waylandc_unfreeze = False
+
+                with state_lock:
+                    latest_waylandc_unfreeze_state = False
+
+                drain_ipc_fifo()
+
+            continue
+
+        # =========================================================================
+        # STATE TRANSITIONS WHILE Screen is OFF (ScrOff)
+        # =========================================================================
+        if target_screen_state is True:
+
+            # --- Transition 2a: First entry into ScrOff ---
+            if current_applied_screen_state is False:
+                print("\n[Event] Lock detected (ScrOff). Reading config and processing freeze/throttle...")
+
+                drain_ipc_fifo()
+                with state_lock:
+                    latest_waylandc_unfreeze_state = False
+
+                stop_all_periodic_timers()
+                periodic_stop_event.clear()
+
+                config_apps = load_config()
+                targets_to_freeze = []
+
+                if config_apps:
+                    for app_name, opts in config_apps.items():
+                        if opts.get("allowapp", False):
+                            print(f"  ├─ [Skip App] '{app_name}' is set to allowapp: true")
+                            continue
+
+                        cgroup_paths = get_cgroups_for_app(app_name)
+                        if not cgroup_paths:
+                            continue
+
+                        approach_type = 'freeze' if opts.get("usefreezeapproch", False) else 'cpu_limit'
+                        do_resume = opts.get("doResumeOnWaylandC", False)
+                        periodic_resume = parse_periodic_resume(opts)
+
+                        for path in cgroup_paths:
+                            target_item = {
+                                'path': path,
+                                'type': approach_type,
+                                'do_resume_on_wayland_c': do_resume,
+                                'periodic_resume': periodic_resume,
+                                'waylandc_active': False,
+                                'periodic_active': False,
+                                'current_state': 'unfrozen'
+                            }
+                            if not any(t['path'] == path for t in targets_to_freeze):
+                                targets_to_freeze.append(target_item)
+
+                if targets_to_freeze:
+                    print(f"  └─ Processing {len(targets_to_freeze)} target cgroup(s)...")
+                    currently_frozen_targets = freeze_targets(targets_to_freeze)
+
+                    for t in currently_frozen_targets:
+                        t['current_state'] = 'frozen'
+
+                    # Start periodic timer background threads
+                    for target in currently_frozen_targets:
+                        if target.get('periodic_resume'):
+                            f_min, u_min = target['periodic_resume']
+                            t = threading.Thread(
+                                target=periodic_resume_worker,
+                                args=(target, f_min, u_min, periodic_stop_event),
+                                daemon=True
+                            )
+                            t.start()
+                            periodic_threads.append(t)
+                else:
+                    print("  └─ No cgroups required freezing.")
+                    currently_frozen_targets = []
+
+                current_applied_screen_state = True
+                current_applied_waylandc_unfreeze = False
+
+            # --- Transition 2b: IPC = 1 (Activate WaylandC Special Resume) ---
+            elif target_waylandc_unfreeze is True and current_applied_waylandc_unfreeze is False:
+                print("\n[State Transition] IPC=1 -> Activating WaylandC unfreeze on eligible targets")
+                with state_lock:
+                    for target in currently_frozen_targets:
+                        if target.get('do_resume_on_wayland_c', False):
+                            target['waylandc_active'] = True
+                            sync_target_state(target)
+
+                current_applied_waylandc_unfreeze = True
+
+            # --- Transition 2c: IPC = 0 (Deactivate WaylandC Special Resume) ---
+            elif target_waylandc_unfreeze is False and current_applied_waylandc_unfreeze is True:
+                print("\n[State Transition] IPC=0 -> Deactivating WaylandC unfreeze on eligible targets")
+                with state_lock:
+                    for target in currently_frozen_targets:
+                        if target.get('do_resume_on_wayland_c', False):
+                            target['waylandc_active'] = False
+                            sync_target_state(target)
+
+                current_applied_waylandc_unfreeze = False
+
+
+if __name__ == "__main__":
+    main()
