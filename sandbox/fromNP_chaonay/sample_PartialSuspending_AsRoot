@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+
+# LICNSE: UNLICENSE (Public Domain) because it is made by AI
+
+import glob
+import os
+import selectors
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+# IPC path to send Wayland compositor unfreeze ("1") and re-freeze ("0") signals
+IPC_PATH = "/run/user/1000/np_chaonay/partialsus_waylandc_unfreeze"
+
+# Linux struct input_event on 64-bit systems = 24 bytes
+EVENT_SIZE = 24
+EV_KEY = 1  # Linux Event type for keys and buttons
+
+
+def check_root():
+    if os.geteuid() != 0:
+        print("[Error] This script must be run as root to access /dev/input/event* devices.")
+        sys.exit(1)
+
+
+def is_any_screen_on() -> bool:
+    """Checks DRM DPMS state. Returns True if at least one display is 'On'."""
+    paths = glob.glob("/sys/class/drm/card*/*/dpms")
+    if not paths:
+        return False
+
+    for p in paths:
+        try:
+            with open(p, "r") as f:
+                if f.read().strip() == "On":
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def set_waylandc_unfreeze_signal(value: str):
+    """Writes '1' or '0' to the IPC FIFO/file."""
+    try:
+        os.makedirs(os.path.dirname(IPC_PATH), exist_ok=True)
+        with open(IPC_PATH, "w") as f:
+            f.write(value)
+            f.flush()
+        print(f"[IPC] Sent WaylandC state signal: '{value}' -> {IPC_PATH}")
+    except Exception as e:
+        print(f"[IPC Error] Failed writing signal '{value}': {e}")
+
+
+def lock_user_session(uid="1000"):
+    """Locks systemd session for specified UID using loginctl."""
+    try:
+        # Find session ID matching the target UID
+        res = subprocess.run(["loginctl", "list-sessions", "--no-legend"], stdout=subprocess.PIPE, text=True)
+        session_id = None
+        for line in res.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == str(uid):
+                session_id = parts[0]
+                break
+
+        if session_id:
+            subprocess.run(["loginctl", "lock-session", session_id], check=False)
+            print(f"[Auto-Lock] Successfully locked session {session_id} for UID {uid}.")
+        else:
+            # Fallback: Lock all sessions for UID
+            subprocess.run(["loginctl", "lock-sessions"], check=False)
+            print(f"[Auto-Lock] Session ID for UID {uid} not explicitly found; triggered global lock-sessions.")
+    except Exception as e:
+        print(f"[Auto-Lock Error] Failed to execute loginctl lock-session: {e}", file=sys.stderr)
+
+
+class InputMonitor:
+    """Manages raw non-blocking reading of all /dev/input/event* devices."""
+
+    def __init__(self):
+        self.selector = selectors.DefaultSelector()
+        self.open_fds = []
+
+    def start(self):
+        """Opens all available input event character devices in non-blocking mode."""
+        self.stop()
+        event_files = glob.glob("/dev/input/event*")
+        for path in event_files:
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                self.selector.register(fd, selectors.EVENT_READ, data=path)
+                self.open_fds.append(fd)
+            except Exception:
+                pass
+        print(f"[InputMonitor] Listening on {len(self.open_fds)} input devices.")
+
+    def stop(self):
+        """Closes all open input device file descriptors."""
+        for fd in self.open_fds:
+            try:
+                self.selector.unregister(fd)
+                os.close(fd)
+            except Exception:
+                pass
+        self.open_fds.clear()
+
+    def has_input(self, timeout=1.0) -> bool:
+        """Polls input devices. Returns True if any input key/button event payload is detected."""
+        if not self.open_fds:
+            return False
+
+        events = self.selector.select(timeout=timeout)
+        input_detected = False
+
+        for key, _ in events:
+            fd = key.fd
+            try:
+                data = os.read(fd, EVENT_SIZE * 16)
+                if not data:
+                    continue
+
+                for i in range(0, len(data) - (len(data) % EVENT_SIZE), EVENT_SIZE):
+                    chunk = data[i : i + EVENT_SIZE]
+                    if len(chunk) == EVENT_SIZE:
+                        _, _, ev_type, ev_code, ev_val = struct.unpack("llHHi", chunk)
+                        if ev_type == EV_KEY or ev_type != 0:
+                            input_detected = True
+            except Exception:
+                pass
+
+        return input_detected
+
+
+def main():
+    check_root()
+
+    running = True
+    def handle_signal(sig, frame):
+        nonlocal running
+        print("\n[Daemon] Shutting down...")
+        running = False
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    monitor = InputMonitor()
+    print("[Daemon] Partial suspend input listener & auto-lock monitor started.")
+
+    while running:
+        screen_on = is_any_screen_on()
+
+        if screen_on:
+            time.sleep(1.0)
+        else:
+            # --- SECTION A: Screen turned OFF ---
+            print("[DPMS] Screen is OFF -> Entering raw input listening mode (Section A)")
+            monitor.start()
+
+            auto_locked = False
+            last_input_time = time.time()
+
+            while running and not is_any_screen_on():
+                # Read input with 1s timeout
+                input_detected = monitor.has_input(timeout=1.0)
+
+                if input_detected:
+                    last_input_time = time.time()  # Reset 30s auto-lock timer
+                    print("[Input Event Detected] Temporary unfreezing Wayland Compositor targets for 5s...")
+                    set_waylandc_unfreeze_signal("1")
+
+                    # Wait for 5 seconds (or reset timer if keys keep being pressed)
+                    end_time = time.time() + 5.0
+                    while time.time() < end_time and running:
+                        if is_any_screen_on():
+                            print("[DPMS] Screen turned ON during unfreeze delay -> Aborting re-freeze.")
+                            break
+
+                        if monitor.has_input(timeout=1.0):
+                            end_time = time.time() + 5.0
+                            last_input_time = time.time()  # Reset 30s auto-lock timer
+
+                    # Re-freeze if screen is STILL off
+                    if not is_any_screen_on() and running:
+                        set_waylandc_unfreeze_signal("0")
+
+                # Check 30-second Auto-Lock condition
+                if not auto_locked and (time.time() - last_input_time >= 30.0):
+                    print("[Auto-Lock] 30 seconds without input in Screen Off state. Locking session for UID 1000...")
+                    lock_user_session("1000")
+                    auto_locked = True
+
+            # Clean up Section A when screen turns back ON
+            monitor.stop()
+            print("[DPMS] Screen turned ON -> Exiting Section A (Auto-lock timer terminated)")
+
+    monitor.stop()
+
+
+if __name__ == "__main__":
+    main()
