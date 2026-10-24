@@ -3,6 +3,7 @@
 - the limitation is that if GUI app is freezed but Wayland Compositor doesn't (at least in KWin), the GUI app crashed due to "Connected Reset By Peer" (which due to Wayland socket)
 - so we freeze KWin too
 - but freezing KWin ==> MPRIS system (system used for showing/control media player info in UI shell) hanged. ==> fixed by perodicResume
+	- PS: it seem to be good... because KWin may have other DBus stuff to communicate from/to on... so perodicResume make KWin able to resolve these DBus ==> Which I think solve our MPRIS problem
 - But perodicResume also wakes GUI app even screen is off (due to above  1st-mentioned limitation) ==> their audio shouldn't be heard while in this partial suspending? ==> fixed in Version7... thanks to temporary virtual audio output device lmao
 - For EasyEffects User: congrats! we have found way to make this stuff work well with my system!... just freeze EasyEffects lmao. (or you can set EasyEffect not to force output device of app)
 	- PS: oops I forget to tell you something ... what I meant of "we have found way to make this stuff work well with my system!" I mean
