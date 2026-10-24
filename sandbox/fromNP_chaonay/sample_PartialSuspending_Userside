@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
+
+# WARNING: Make sure that AsRoot script is running before screen off... or else you will be out of controlled (in case you freeze Wayland Compositor) 
+# HOW-TO: Config PATH of {Config, Cgroup Helper IPC_PATH)
 # LICENSE: UNLICENSE (Public Domain) because it is made by AI
 # Version: 7 (1st BugFix)
+
+
+
 import glob
 import json
 import os
