@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # LICNSE: UNLICENSE (Public Domain) because it is made by AI
+# Version: 2
 
 import glob
 import os
