@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-
 # LICENSE: UNLICENSE (Public Domain) because it is made by AI
-
 import glob
 import json
 import os
@@ -17,9 +15,9 @@ CGROUP_HELPER_PATH = os.path.expanduser("./partialsuspending_cgroupfinder")
 IPC_PATH = "/run/user/1000/np_chaonay/partialsus_waylandc_unfreeze"
 
 # --- Event-Driven State Variables ---
-state_lock = threading.Lock()
+state_lock = threading.RLock()
 latest_requested_lock_state = False   # True = Locked (ScrOff), False = Unlocked (ScrOn)
-latest_waylandc_unfreeze_state = False  # True = IPC sent 1 (WaylandC Unfreeze), False = IPC sent 0 (Normal)
+waylandc_pending_count = 0            # Integer pending-count for WaylandC resume requests
 state_changed_event = threading.Event()
 shutdown_requested = False
 
@@ -28,6 +26,7 @@ shutdown_requested = False
 #   'path': cgroup_dir_path,
 #   'type': 'freeze' | 'cpu_limit',
 #   'do_resume_on_wayland_c': bool,
+#   'is_wayland_comp': bool,
 #   'periodic_resume': (freeze_min, unfreeze_min) | None,
 #   'waylandc_active': bool,
 #   'periodic_active': bool,
@@ -40,6 +39,14 @@ muted_sink_inputs = []
 # --- Periodic Resume Control Variables ---
 periodic_stop_event = threading.Event()
 periodic_threads = []
+
+# --- Global Variables สำหรับ Audio Redirection ---
+NULL_SINK_NAME = "partialsus_null_sink"
+NULL_SINK_DESC = "< This output device is act as workaround for partial suspending's limitation >"
+null_sink_module_id = None
+
+# Item format: {'id': sink_input_id, 'original_sink': sink_id_or_name, 'cgroup': cgroup_dir_path}
+moved_sink_inputs = []
 
 
 def stop_all_periodic_timers():
@@ -88,7 +95,7 @@ def sync_target_state(target):
     cgroup_dir = target['path']
     if desired_state == 'unfrozen':
         print(f"  ├─ [Special Resume Active] Resuming {cgroup_dir} (WaylandC={target['waylandc_active']}, Periodic={target['periodic_active']})")
-        unfreeze_targets([target])
+        unfreeze_targets([target],True)
         target['current_state'] = 'unfrozen'
     else:
         print(f"  ├─ [Special Resume Inactive] Re-freezing {cgroup_dir} (All special unfreezes deactivated)")
@@ -96,13 +103,40 @@ def sync_target_state(target):
         target['current_state'] = 'frozen'
 
 
+def adjust_waylandc_pending_count(delta):
+    """
+    Adjusts the integer pending count for WaylandC unfreeze requests.
+    - If count < 0: resets to 0.
+    - If count > 0: WaylandC unfreeze state IS applied (targets with doResumeOnWaylandC=true unfreeze).
+    - If count == 0: WaylandC unfreeze state is NOT applied.
+    """
+    global waylandc_pending_count, currently_frozen_targets
+    with state_lock:
+        old_count = waylandc_pending_count
+        waylandc_pending_count += delta
+        if waylandc_pending_count < 0:
+            waylandc_pending_count = 0
+
+        old_applied = (old_count > 0)
+        new_applied = (waylandc_pending_count > 0)
+
+        print(f"  ├─ [WaylandC Pending Count] Delta: {delta:+d} | Counter: {old_count} -> {waylandc_pending_count} (Applied: {new_applied})")
+
+        if old_applied != new_applied:
+            for target in currently_frozen_targets:
+                if target.get('do_resume_on_wayland_c', False):
+                    target['waylandc_active'] = new_applied
+                    sync_target_state(target)
+
+
 def periodic_resume_worker(target, freeze_min, unfreeze_min, stop_event):
     """Background thread managing periodic freeze/unfreeze cycles during Screen-OFF."""
     freeze_sec = freeze_min * 60.0
     unfreeze_sec = unfreeze_min * 60.0
     cgroup_path = target['path']
+    is_wayland_comp = target.get('is_wayland_comp', False)
 
-    print(f"  ├─ [Periodic Thread] Started for {cgroup_path} (Freeze: {freeze_min}m, Unfreeze: {unfreeze_min}m)")
+    print(f"  ├─ [Periodic Thread] Started for {cgroup_path} (Freeze: {freeze_min}m, Unfreeze: {unfreeze_min}m, WaylandComp: {is_wayland_comp})")
 
     while not stop_event.is_set():
         # Phase 1: Normal Freeze duration
@@ -114,6 +148,8 @@ def periodic_resume_worker(target, freeze_min, unfreeze_min, stop_event):
         with state_lock:
             target['periodic_active'] = True
             sync_target_state(target)
+            if is_wayland_comp:
+                adjust_waylandc_pending_count(+1)
 
         if stop_event.wait(unfreeze_sec):
             break
@@ -122,6 +158,8 @@ def periodic_resume_worker(target, freeze_min, unfreeze_min, stop_event):
         print(f"\n[Periodic Event] Ending unfreeze phase for {cgroup_path}")
         with state_lock:
             target['periodic_active'] = False
+            if is_wayland_comp:
+                adjust_waylandc_pending_count(-1)
             sync_target_state(target)
 
     print(f"  ├─ [Periodic Thread] Stopped for {cgroup_path}")
@@ -191,52 +229,160 @@ def set_sink_input_mute(sink_input_id, mute=True):
         return False
 
 
+# --- Helper Functions สำหรับจัดการ Null Sink & Audio ---
+
+def ensure_null_sink():
+    """สร้าง Null Sink หากยังไม่มีอยู่ และเก็บ module_id ไว้"""
+    global null_sink_module_id
+    if null_sink_module_id is not None:
+        return True
+
+    cmd = [
+        "pactl", "load-module", "module-null-sink",
+        f"sink_name={NULL_SINK_NAME}",
+        f"sink_properties=device.description=\"{NULL_SINK_DESC}\""
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode == 0 and res.stdout.strip().isdigit():
+            null_sink_module_id = int(res.stdout.strip())
+            print(f"  ├─ [Audio] Created null sink '{NULL_SINK_NAME}' (Module ID: {null_sink_module_id})")
+            return True
+        else:
+            print(f"[Error] Failed to load null sink module: {res.stderr}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"[Error] Exception creating null sink: {e}", file=sys.stderr)
+        return False
+
+
+def remove_null_sink():
+    """ลบ Null Sink เมื่อไม่มี stream ค้างอยู่อีกต่อไป"""
+    global null_sink_module_id
+    if null_sink_module_id is None:
+        return
+
+    cmd = ["pactl", "unload-module", str(null_sink_module_id)]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0:
+            print(f"  ├─ [Audio] Unloaded null sink (Module ID: {null_sink_module_id})")
+        null_sink_module_id = None
+    except Exception as e:
+        print(f"[Error] Exception unloading null sink: {e}", file=sys.stderr)
+        null_sink_module_id = None
+
+
+def get_active_audio_streams():
+    """Queries pactl (PipeWire) for active sink-inputs with their current sink."""
+    try:
+        res = subprocess.run(
+            ["pactl", "-f", "json", "list", "sink-inputs"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            streams = []
+            for item in data:
+                sink_input_id = item.get("index")
+                current_sink = item.get("sink")
+                properties = item.get("properties", {})
+
+                pid_str = properties.get("application.process.id")
+                if sink_input_id is not None and pid_str and pid_str.isdigit():
+                    streams.append({
+                        "id": sink_input_id,
+                        "pid": int(pid_str),
+                        "sink": current_sink
+                    })
+            return streams
+    except Exception as e:
+        print(f"[Warning] Failed to query PipeWire audio streams via pactl: {e}", file=sys.stderr)
+    return []
+
+
+def move_sink_input(sink_input_id, target_sink):
+    """ย้าย sink-input ไปยัง sink ที่กำหนด"""
+    try:
+        res = subprocess.run(
+            ["pactl", "move-sink-input", str(sink_input_id), str(target_sink)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return res.returncode == 0
+    except Exception as e:
+        print(f"[Error] Failed moving sink-input {sink_input_id} to {target_sink}: {e}", file=sys.stderr)
+        return False
+
+
+# --- Main Functions ตามที่ขอ ---
+
 def handle_audio_mute_for_cgroup(cgroup_dir):
-    """Mutes active audio streams belonging to PIDs in the given cgroup."""
-    global muted_sink_inputs
+    """Moves active audio streams belonging to PIDs in the given cgroup to the workaround null sink."""
+    global moved_sink_inputs
     pids = get_cgroup_pids(cgroup_dir)
     if not pids:
         return
 
     active_streams = get_active_audio_streams()
-    for stream in active_streams:
-        if stream["pid"] in pids:
-            if not stream["muted"]:
-                print(f"   ├─ [Audio] Muting stream ID {stream['id']} (PID {stream['pid']})")
-                if set_sink_input_mute(stream["id"], mute=True):
-                    if not any(item['id'] == stream['id'] for item in muted_sink_inputs):
-                        muted_sink_inputs.append({'id': stream['id'], 'cgroup': cgroup_dir})
-            else:
-                print(f"   ├─ [Audio] Stream ID {stream['id']} (PID {stream['pid']}) is already muted.")
+    streams_to_move = [s for s in active_streams if s["pid"] in pids]
+
+    if not streams_to_move:
+        return
+
+    # สร้าง Null Sink ก่อนย้าย ถ้ายังไม่ได้สร้าง
+    if not ensure_null_sink():
+        return
+
+    for stream in streams_to_move:
+        if any(item['id'] == stream['id'] for item in moved_sink_inputs):
+            print(f"   ├─ [Audio] Stream ID {stream['id']} (PID {stream['pid']}) is already moved.")
+            continue
+
+        orig_sink = stream['sink']
+        print(f"   ├─ [Audio] Redirecting stream ID {stream['id']} (PID {stream['pid']}) from sink '{orig_sink}' to null sink")
+        if move_sink_input(stream["id"], NULL_SINK_NAME):
+            moved_sink_inputs.append({
+                'id': stream['id'],
+                'original_sink': orig_sink,
+                'cgroup': cgroup_dir
+            })
 
 
 def restore_audio_mutes_for_targets(target_list=None):
     """
-    Unmutes audio streams.
-    - If target_list is specified: Unmutes ONLY streams associated with those target cgroups.
-    - If target_list is None: Unmutes ALL tracked streams (e.g. Screen ON).
+    Restores audio streams back to their original recorded sinks.
+    - If target_list is specified: Restores ONLY streams associated with those target cgroups.
+    - If target_list is None: Restores ALL tracked streams (e.g. Screen ON).
     """
-    global muted_sink_inputs
-    if not muted_sink_inputs:
+    global moved_sink_inputs
+    if not moved_sink_inputs:
+        remove_null_sink()
         return
 
     if target_list is None:
-        print("  ├─ Unmuting all tracked audio streams...")
-        for item in muted_sink_inputs:
-            print(f"   ├─ [Audio Unmute] Stream ID {item['id']}")
-            set_sink_input_mute(item['id'], mute=False)
-        muted_sink_inputs.clear()
+        print("  ├─ Restoring all tracked audio streams to original sinks...")
+        for item in moved_sink_inputs:
+            print(f"   ├─ [Audio Restore] Stream ID {item['id']} -> Original Sink: {item['original_sink']}")
+            move_sink_input(item['id'], item['original_sink'])
+        moved_sink_inputs.clear()
     else:
         target_cgroups = {t['path'] for t in target_list}
-        remaining_mutes = []
-        print(f"  ├─ Unmuting audio streams for target subset ({len(target_cgroups)} cgroup(s))...")
-        for item in muted_sink_inputs:
+        remaining_moves = []
+        print(f"  ├─ Restoring audio streams for target subset ({len(target_cgroups)} cgroup(s))...")
+        for item in moved_sink_inputs:
             if item['cgroup'] in target_cgroups:
-                print(f"   ├─ [Audio Unmute] Stream ID {item['id']} (cgroup: {item['cgroup']})")
-                set_sink_input_mute(item['id'], mute=False)
+                print(f"   ├─ [Audio Restore] Stream ID {item['id']} -> Original Sink: {item['original_sink']} (cgroup: {item['cgroup']})")
+                move_sink_input(item['id'], item['original_sink'])
             else:
-                remaining_mutes.append(item)
-        muted_sink_inputs = remaining_mutes
+                remaining_moves.append(item)
+        moved_sink_inputs = remaining_moves
+
+    # เมื่อไม่มี stream ค้างอยู่ใน Null Sink แล้ว ให้ลบ Null Sink ออก
+    if not moved_sink_inputs:
+        remove_null_sink()
 
 
 def dpms_screen_listener():
@@ -309,8 +455,6 @@ def drain_ipc_fifo():
 
 def ipc_waylandc_unfreeze_listener():
     """Background thread: Listens for WaylandC unfreeze IPC signals non-stop."""
-    global latest_waylandc_unfreeze_state
-
     ipc_dir = os.path.dirname(IPC_PATH)
     os.makedirs(ipc_dir, exist_ok=True)
 
@@ -330,22 +474,14 @@ def ipc_waylandc_unfreeze_listener():
                     if not content:
                         continue
 
-                    new_state = None
-                    if content == "1":
-                        new_state = True
-                    elif content == "0":
-                        new_state = False
-
-                    if new_state is not None:
-                        with state_lock:
-                            if latest_requested_lock_state is False:
-                                latest_waylandc_unfreeze_state = False
-                                print(f"[IPC Signal] Screen ON -> Drained and discarded signal '{content}'")
-                            else:
-                                if latest_waylandc_unfreeze_state != new_state:
-                                    latest_waylandc_unfreeze_state = new_state
-                                    print(f"[IPC Signal] Received '{content}' -> Requesting {'WaylandC Unfreeze' if new_state else 'WaylandC Refreeze'}")
-                                    state_changed_event.set()
+                    with state_lock:
+                        if latest_requested_lock_state is False:
+                            print(f"[IPC Signal] Screen ON -> Drained and discarded signal '{content}'")
+                        else:
+                            if content == "1":
+                                adjust_waylandc_pending_count(+1)
+                            elif content == "0":
+                                adjust_waylandc_pending_count(-1)
         except Exception:
             time.sleep(0.2)
 
@@ -446,6 +582,10 @@ def freeze_targets(target_list):
                 successful_targets.append(target)
                 continue
 
+            # due to that limitation of wayland-perodic-wake is requierd
+            # NOW DISABLED beuase it is buggy (app closed while audio muted... the mute state is persistence)
+            #handle_audio_mute_for_cgroup(cgroup_dir)
+
             freeze_file = os.path.join(cgroup_dir, "cgroup.freeze")
             if write_cgroup_file(freeze_file, "1"):
                 successful_targets.append(target)
@@ -459,7 +599,8 @@ def freeze_targets(target_list):
                 successful_targets.append(target)
                 continue
 
-            handle_audio_mute_for_cgroup(cgroup_dir)
+            # NOW DISABLED beuase it is buggy (app closed while audio muted... the mute state is persistence)
+            #handle_audio_mute_for_cgroup(cgroup_dir)
 
             cpu_max_file = os.path.join(cgroup_dir, "cpu.max")
             if write_cgroup_file(cpu_max_file, "62500 1000000"):
@@ -480,7 +621,7 @@ def refreeze_targets(target_list):
     return freeze_targets(target_list)
 
 
-def unfreeze_targets(target_list):
+def unfreeze_targets(target_list,isSpecialUnfreeze=False):
     """Restores cgroup states and unmutes audio specifically for the provided target_list."""
     for target in target_list:
         cgroup_dir = target['path']
@@ -501,11 +642,11 @@ def unfreeze_targets(target_list):
                 print(f"  ├─ [Failed CPU Restore] {cgroup_dir}", file=sys.stderr)
 
     # Unmute audio ONLY for the cgroups present in target_list
-    restore_audio_mutes_for_targets(target_list)
+    if not isSpecialUnfreeze: restore_audio_mutes_for_targets(target_list)
 
 
 def main():
-    global shutdown_requested, currently_frozen_targets, latest_waylandc_unfreeze_state
+    global shutdown_requested, currently_frozen_targets, waylandc_pending_count
 
     threading.Thread(target=dpms_screen_listener, daemon=True).start()
     threading.Thread(target=ipc_waylandc_unfreeze_listener, daemon=True).start()
@@ -514,13 +655,14 @@ def main():
     print(f"Monitoring DPMS & WaylandC IPC at: {IPC_PATH}")
 
     current_applied_screen_state = False  # False = ScrOn, True = ScrOff
-    current_applied_waylandc_unfreeze = False  # True = WaylandC IPC active, False = Normal
 
     def cleanup(signum, frame):
-        global shutdown_requested, currently_frozen_targets
+        global shutdown_requested, currently_frozen_targets, waylandc_pending_count
         print("\n[Event] Shutting down... Unfreezing cgroups and restoring audio.")
         shutdown_requested = True
         stop_all_periodic_timers()
+        with state_lock:
+            waylandc_pending_count = 0
         if currently_frozen_targets:
             unfreeze_targets(currently_frozen_targets)
             restore_audio_mutes_for_targets(None)
@@ -536,7 +678,6 @@ def main():
 
         with state_lock:
             target_screen_state = latest_requested_lock_state     # True = ScrOff, False = ScrOn
-            target_waylandc_unfreeze = latest_waylandc_unfreeze_state # True = WaylandC Unfreeze, False = Refreeze
 
         # =========================================================================
         # STATE TRANSITION 1: Screen ON (ScrOff -> ScrOn)
@@ -555,27 +696,25 @@ def main():
 
                 currently_frozen_targets = []
                 current_applied_screen_state = False
-                current_applied_waylandc_unfreeze = False
 
                 with state_lock:
-                    latest_waylandc_unfreeze_state = False
+                    waylandc_pending_count = 0
 
                 drain_ipc_fifo()
 
             continue
 
         # =========================================================================
-        # STATE TRANSITIONS WHILE Screen is OFF (ScrOff)
+        # STATE TRANSITION 2: Screen OFF (ScrOn -> ScrOff)
         # =========================================================================
         if target_screen_state is True:
 
-            # --- Transition 2a: First entry into ScrOff ---
             if current_applied_screen_state is False:
                 print("\n[Event] Lock detected (ScrOff). Reading config and processing freeze/throttle...")
 
                 drain_ipc_fifo()
                 with state_lock:
-                    latest_waylandc_unfreeze_state = False
+                    waylandc_pending_count = 0
 
                 stop_all_periodic_timers()
                 periodic_stop_event.clear()
@@ -597,11 +736,17 @@ def main():
                         do_resume = opts.get("doResumeOnWaylandC", False)
                         periodic_resume = parse_periodic_resume(opts)
 
+                        optattrib = opts.get("optattrib")
+                        is_wayland_comp = False
+                        if isinstance(optattrib, dict):
+                            is_wayland_comp = optattrib.get("isWaylandComp", False)
+
                         for path in cgroup_paths:
                             target_item = {
                                 'path': path,
                                 'type': approach_type,
                                 'do_resume_on_wayland_c': do_resume,
+                                'is_wayland_comp': is_wayland_comp,
                                 'periodic_resume': periodic_resume,
                                 'waylandc_active': False,
                                 'periodic_active': False,
@@ -633,29 +778,6 @@ def main():
                     currently_frozen_targets = []
 
                 current_applied_screen_state = True
-                current_applied_waylandc_unfreeze = False
-
-            # --- Transition 2b: IPC = 1 (Activate WaylandC Special Resume) ---
-            elif target_waylandc_unfreeze is True and current_applied_waylandc_unfreeze is False:
-                print("\n[State Transition] IPC=1 -> Activating WaylandC unfreeze on eligible targets")
-                with state_lock:
-                    for target in currently_frozen_targets:
-                        if target.get('do_resume_on_wayland_c', False):
-                            target['waylandc_active'] = True
-                            sync_target_state(target)
-
-                current_applied_waylandc_unfreeze = True
-
-            # --- Transition 2c: IPC = 0 (Deactivate WaylandC Special Resume) ---
-            elif target_waylandc_unfreeze is False and current_applied_waylandc_unfreeze is True:
-                print("\n[State Transition] IPC=0 -> Deactivating WaylandC unfreeze on eligible targets")
-                with state_lock:
-                    for target in currently_frozen_targets:
-                        if target.get('do_resume_on_wayland_c', False):
-                            target['waylandc_active'] = False
-                            sync_target_state(target)
-
-                current_applied_waylandc_unfreeze = False
 
 
 if __name__ == "__main__":
