@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+# HOW-TO:
+# - Config PATH of {IPC_PATH (must same as configed in Userside)}
+# - Config of how long of delay before the session is locked after screen is off (this useful if you decided to freeze Wayland Compositor and cause original user-lock timer is unusable)
+# - if your user's ID isnt 1000 then you have to configure the code manually 
 # LICNSE: UNLICENSE (Public Domain) because it is made by AI
-# Version: 2
+# Version: 3
 
 import glob
 import os
@@ -11,6 +15,9 @@ import struct
 import subprocess
 import sys
 import time
+
+# Lock Screen Delay Time After Screen Is Off in second-unit (this useful if you decided to freeze Wayland Compositor and cause original user-lock timer is unusable)
+LOCKSCR_TIME = 30
 
 # IPC path to send Wayland compositor unfreeze ("1") and re-freeze ("0") signals
 IPC_PATH = "/run/user/1000/np_chaonay/partialsus_waylandc_unfreeze"
@@ -167,7 +174,7 @@ def main():
                 input_detected = monitor.has_input(timeout=1.0)
 
                 if input_detected:
-                    last_input_time = time.time()  # Reset 30s auto-lock timer
+                    last_input_time = time.time()  # Reset {LOCKSCR_TIME} sec auto-lock timer
                     print("[Input Event Detected] Temporary unfreezing Wayland Compositor targets for 5s...")
                     set_waylandc_unfreeze_signal("1")
 
@@ -180,15 +187,15 @@ def main():
 
                         if monitor.has_input(timeout=1.0):
                             end_time = time.time() + 5.0
-                            last_input_time = time.time()  # Reset 30s auto-lock timer
+                            last_input_time = time.time()  # Reset {LOCKSCR_TIME} sec auto-lock timer
 
                     # Re-freeze if screen is STILL off
                     if not is_any_screen_on() and running:
                         set_waylandc_unfreeze_signal("0")
 
-                # Check 30-second Auto-Lock condition
-                if not auto_locked and (time.time() - last_input_time >= 30.0):
-                    print("[Auto-Lock] 30 seconds without input in Screen Off state. Locking session for UID 1000...")
+                # Check {LOCKSCR_TIME}-second Auto-Lock condition
+                if not auto_locked and (time.time() - last_input_time >= LOCKSCR_TIME):
+                    print(f"[Auto-Lock] {LOCKSCR_TIME} seconds without input in Screen Off state. Locking session for UID 1000...")
                     lock_user_session("1000")
                     auto_locked = True
 
