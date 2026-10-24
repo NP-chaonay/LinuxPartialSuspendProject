@@ -5,7 +5,7 @@
 # - Config of how long of delay before the session is locked after screen is off (this useful if you decided to freeze Wayland Compositor and cause original user-lock timer is unusable)
 # - if your user's ID isnt 1000 then you have to configure the code manually 
 # LICNSE: UNLICENSE (Public Domain) because it is made by AI
-# Version: 3
+# Version: 4
 
 import glob
 import os
@@ -16,8 +16,8 @@ import subprocess
 import sys
 import time
 
-# Lock Screen Delay Time After Screen Is Off in second-unit (this useful if you decided to freeze Wayland Compositor and cause original user-lock timer is unusable)
-LOCKSCR_TIME = 30
+# Lock Screen Delay Time After Screen Is Off in second-unit (can be decimal) (this useful if you decided to freeze Wayland Compositor and cause original user-lock timer is unusable)
+LOCKSCR_TIME = 30.0
 
 # IPC path to send Wayland compositor unfreeze ("1") and re-freeze ("0") signals
 IPC_PATH = "/run/user/1000/np_chaonay/partialsus_waylandc_unfreeze"
