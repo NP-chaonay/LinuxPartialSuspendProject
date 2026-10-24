@@ -9,6 +9,7 @@
  		- In case want audio of freezed app not to be heard ... but that apps is using EasyEffects ==> it works
    		- In case want audio of some app to be heard ... but that apps is using EasyEffects ==> it didn't ... you have to bypass EasyEffects OR set EasyEffect not to force output device of app.... but trust me... if you want power saving... using something that able to render audio ahead for many seconds instead of realtime (such as mpv) that can gain much worthful power saving
      	- you can allow EasyEffects ... but any freezed apps that using EasyEffects ... you would heard that app's sound if the app is temporarily waken due to some special condition (such as doResumeOnWaylandC... which can be triggered by Wayland Compositor's Perodic Wakeup (set by tag: isWaylandComp) OR RootSide script (when user send input while screen is off)
+   - PS2: if you choose to freeze EasyEffect instead of "set EasyEffect not to force output device of each app" ==> then you should set doResumeOnWaylandC to false ==> and do not open the window of EasyEffect before going screen off (to prevent crashing from 1st-mentioned limitation)
 ```
 {
 	"regappcode": {
