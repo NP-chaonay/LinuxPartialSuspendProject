@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # LICENSE: UNLICENSE (Public Domain) because it is made by AI
-# Version: 7
+# Version: 7 (1st BugFix)
 import glob
 import json
 import os
@@ -584,8 +584,7 @@ def freeze_targets(target_list):
                 continue
 
             # due to that limitation of wayland-perodic-wake is requierd
-            # NOW DISABLED beuase it is buggy (app closed while audio muted... the mute state is persistence)
-            #handle_audio_mute_for_cgroup(cgroup_dir)
+            handle_audio_mute_for_cgroup(cgroup_dir)
 
             freeze_file = os.path.join(cgroup_dir, "cgroup.freeze")
             if write_cgroup_file(freeze_file, "1"):
@@ -600,8 +599,7 @@ def freeze_targets(target_list):
                 successful_targets.append(target)
                 continue
 
-            # NOW DISABLED beuase it is buggy (app closed while audio muted... the mute state is persistence)
-            #handle_audio_mute_for_cgroup(cgroup_dir)
+            handle_audio_mute_for_cgroup(cgroup_dir)
 
             cpu_max_file = os.path.join(cgroup_dir, "cpu.max")
             if write_cgroup_file(cpu_max_file, "62500 1000000"):
