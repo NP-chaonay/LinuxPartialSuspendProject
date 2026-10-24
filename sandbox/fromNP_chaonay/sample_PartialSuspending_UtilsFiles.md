@@ -1,3 +1,6 @@
+# Warning/General About these set of sample 
+- For code of {Userside,AsRoot} ... Read How-To and Warning at head of file
+
 # Sample Config File (json) (made on RootSide+Userside Version7) 
 - this code freeze many GUI app that seem to be CPU-hungry
 - the limitation is that if GUI app is freezed but Wayland Compositor doesn't (at least in KWin), the GUI app crashed due to "Connected Reset By Peer" (which due to Wayland socket)
