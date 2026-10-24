@@ -5,6 +5,10 @@
 - but freezing KWin ==> MPRIS system (system used for showing/control media player info in UI shell) hanged. ==> fixed by perodicResume
 - But perodicResume also wakes GUI app even screen is off (due to above  1st-mentioned limitation) ==> their audio shouldn't be heard while in this partial suspending? ==> fixed in Version7... thanks to temporary virtual audio output device lmao
 - For EasyEffects User: congrats! we have found way to make this stuff work well with my system!... just freeze EasyEffects lmao. (or you can set EasyEffect not to force output device of app)
+	- PS: oops I forget to tell you something ... what I meant of "we have found way to make this stuff work well with my system!" I mean
+ 		- In case want audio of freezed app not to be heard ... but that apps is using EasyEffects ==> it works
+   		- In case want audio of some app to be heard ... but that apps is using EasyEffects ==> it didn't ... you have to bypass EasyEffects OR set EasyEffect not to force output device of app.... but trust me... if you want power saving... using something that able to render audio ahead for many seconds instead of realtime (such as mpv) that can gain much worthful power saving
+     	- you can allow EasyEffects ... but any freezed apps that using EasyEffects ... you would heard that app's sound if the app is temporarily waken due to some special condition (such as doResumeOnWaylandC... which can be triggered by Wayland Compositor's Perodic Wakeup (set by tag: isWaylandComp) OR RootSide script (when user send input while screen is off)
 ```
 {
 	"regappcode": {
