@@ -3,6 +3,7 @@
   if your user's ID isnt 1000 then you have to configure the cgroup-finder manually about User ID (this is easy)
   
 # Sample Config File (json) (for RootSide Version 4 +Userside Version7) 
+- JSON File: if any unsupported key is existed... the script would be ignore... so don't worry about it  
 - this code freeze many GUI app that seem to be CPU-hungry
 - the limitation is that if GUI app is freezed but Wayland Compositor doesn't (at least in KWin), the GUI app crashed due to "Connected Reset By Peer" (which due to Wayland socket)
 - so we freeze KWin too
