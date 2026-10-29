@@ -24,7 +24,10 @@ This project is part of a larger initiative: We Will Make Linux Desktop Great Ag
 - `<TBA>`
 
 ## Plan: Modes List
-### Partial Suspending
+### Network Mode for Suspending States
+- Disconnected: No Radio Device (such as Bluetooth/Wi-Fi) On
+- Connected: Radio Device is intacted
+### App Selection in Partial Suspending
 - Opt-in: You have to put your app-to-freeze in the list first
 - Opt-out: You have to put your app-to-exeempt-from-freezing in the list first... our system will freeze user's `app.slice background.slice and so-on` cgroup by default 
 
