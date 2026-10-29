@@ -18,9 +18,10 @@ This project is part of a larger initiative: We Will Make Linux Desktop Great Ag
   - run as root
   - run per user
 - Desktop Environemnt Modification
+  - `<TBA>`
 - Systemd Integration
-  - <TBA>
-- <TBA>
+  - `<TBA>`
+- `<TBA>`
 
 ## Experiments Done
 - Does freezing an audio-playing app pause its audio?
