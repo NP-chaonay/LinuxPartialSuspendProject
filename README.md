@@ -13,6 +13,15 @@ This project is part of a larger initiative: We Will Make Linux Desktop Great Ag
 - If you have any questions or feedback, feel free to open an Issue.
 - Want to contribute or volunteer? Feel free to start a discussion in the "Issue" tab.
 
+## Plan: Project Components
+- Main daemon
+  - run as root
+  - run per user
+- Desktop Environemnt Modification
+- Systemd Integration
+  - <TBA>
+- <TBA>
+
 ## Experiments Done
 - Does freezing an audio-playing app pause its audio?
 > works normally
